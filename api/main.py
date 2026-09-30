@@ -1,9 +1,14 @@
+import asyncio
 import os
+from pathlib import Path
+from uuid import uuid4
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 import httpx
-from fastapi import FastAPI, Request
+from celery import Celery
+from celery.result import AsyncResult
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
@@ -40,6 +45,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="LLM App", version="0.0.1", lifespan=lifespan)
+celery_app = Celery(
+    "llmapp_api",
+    broker=os.getenv("REDIS_URL", "redis://redis:6379/0"),
+    backend=os.getenv("REDIS_URL", "redis://redis:6379/0"),
+)
 
 
 async def get_db(request: Request) -> AsyncIterator[AsyncSession]:
@@ -59,6 +69,57 @@ async def root() -> dict[str, str]:
 @app.get("/version")
 async def version() -> dict[str, str]:
     return {"version": app.version}
+
+
+@app.post("/uploads/pdf", status_code=202)
+async def upload_pdf(file: UploadFile = File(...)) -> dict[str, str]:
+    if not file.filename or Path(file.filename).suffix.lower() != ".pdf":
+        raise HTTPException(status_code=400, detail="Only PDF files are supported")
+
+    upload_dir = Path(os.getenv("UPLOAD_DIR", "/uploads"))
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    file_path = upload_dir / f"{uuid4()}.pdf"
+
+    try:
+        with file_path.open("wb") as destination:
+            first_chunk = await file.read(1024)
+            if b"%PDF-" not in first_chunk:
+                raise HTTPException(status_code=400, detail="Uploaded file is not a PDF")
+            destination.write(first_chunk)
+            while chunk := await file.read(1024 * 1024):
+                destination.write(chunk)
+    except Exception:
+        file_path.unlink(missing_ok=True)
+        raise
+    finally:
+        await file.close()
+
+    try:
+        task = await asyncio.to_thread(
+            celery_app.send_task,
+            "tasks.extract_pdf_text",
+            args=[str(file_path)],
+        )
+    except Exception:
+        file_path.unlink(missing_ok=True)
+        raise
+    return {"task_id": task.id, "status": "queued"}
+
+
+@app.get("/tasks/{task_id}")
+async def get_task_status(task_id: str) -> dict[str, object]:
+    def read_result() -> dict[str, object]:
+        result = AsyncResult(task_id, app=celery_app)
+        if result.state == "SUCCESS":
+            return {"task_id": task_id, "status": "completed", "result": result.result}
+        if result.state == "FAILURE":
+            return {"task_id": task_id, "status": "failed", "error": str(result.result)}
+        return {
+            "task_id": task_id,
+            "status": "processing" if result.state == "STARTED" else "queued",
+        }
+
+    return await asyncio.to_thread(read_result)
 
 
 @app.get("/healthz")
