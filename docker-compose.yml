@@ -1,6 +1,7 @@
 version: "3.8"
 
 services:
+  # 1. Frontend: Chainlit (Python)
   frontend:
     build:
       context: ./frontend
@@ -9,7 +10,7 @@ services:
       - "8000:8000"
     volumes:
       - ./frontend:/app
-    command: chainlit run app.py --host 0.0.0.0 --port 8000
+    command: sh -c "pip install -r requirements.txt && chainlit run app.py --host 0.0.0.0 --port 8000"
     environment:
       - BACKEND_API_URL=http://api:8080
       - CHAINLIT_AUTH_SECRET=${CHAINLIT_AUTH_SECRET:-cambiame_por_un_secreto_largo}
@@ -17,7 +18,7 @@ services:
       api:
         condition: service_healthy
 
-
+  # 2. Backend: FastAPI (Python) - Recibe archivos y encola tareas rápidas
   api:
     build:
       context: ./api
@@ -26,13 +27,15 @@ services:
       - "8080:8080"
     volumes:
       - ./api:/app
-      - ~/.aws:/root/.aws:ro  # Credenciales de AWS  para Bedrock
-    command: uvicorn main:app --host 0.0.0.0 --port 8080 --reload
+      - ~/.aws:/root/.aws:ro  # Credenciales locales de AWS Bedrock
+      - uploads:/uploads
+    command: sh -c "pip install -r requirements.txt && uvicorn main:app --host 0.0.0.0 --port 8080 --reload"
     environment:
       - POSTGRES_DSN=${POSTGRES_DSN:-postgresql+asyncpg://postgres:postgres@postgres:5432/dev}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
       - VECTOR_DB_URL=${VECTOR_DB_URL:-http://vector_db:6333}
-      - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION:-us-east-1}  # Región para AWS Bedrock
+      - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION:-us-east-1}
+      - UPLOAD_DIR=/uploads
     depends_on:
       postgres:
         condition: service_healthy
@@ -41,12 +44,39 @@ services:
       vector_db:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/healthz')"]
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8080/healthz')"
       interval: 5s
       timeout: 3s
       retries: 10
 
-  # 3. Vector DB: Qdrant for RAG
+  # 3. El Worker (El "Sidekiq" - Celery): Procesa los PDFs de fondo, llama a Bedrock y alimenta Qdrant
+  worker:
+    build:
+      context: ./worker
+      dockerfile: Dockerfile
+    volumes:
+      - ./worker:/app
+      - ~/.aws:/root/.aws:ro  # El worker también necesita credenciales para llamar a AWS Bedrock
+      - uploads:/uploads
+    # Comando para arrancar Celery apuntando a tu archivo de tareas (ej: tasks.py)
+    command: sh -c "pip install -r requirements.txt && celery -A tasks.celery_app worker --loglevel=info"
+    environment:
+      - POSTGRES_DSN=${POSTGRES_DSN:-postgresql+asyncpg://postgres:postgres@postgres:5432/dev}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - VECTOR_DB_URL=${VECTOR_DB_URL:-http://vector_db:6333}
+      - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION:-us-east-1}
+      - UPLOAD_DIR=/uploads
+    depends_on:
+      redis:
+        condition: service_healthy
+      vector_db:
+        condition: service_healthy
+
+  # 4. Vector DB: Qdrant
   vector_db:
     image: qdrant/qdrant:latest
     ports:
@@ -54,11 +84,12 @@ services:
     volumes:
       - qdrant_data:/qdrant/storage
     healthcheck:
-      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/6333; printf \"GET /healthz HTTP/1.0\\r\\n\\r\\n\" >&3; IFS= read -r response <&3; [[ \"$$response\" == *200* ]]'"]
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/6333; printf \"GET /readyz HTTP/1.0\\r\\n\\r\\n\" >&3; IFS= read -r response <&3; [[ \"$$response\" == *200* ]]'"]
       interval: 5s
       timeout: 3s
       retries: 10
 
+  # 5. Base de Datos Tradicional: Postgres
   postgres:
     image: postgres:16-alpine
     environment:
@@ -79,7 +110,7 @@ services:
       timeout: 3s
       retries: 10
 
-  # 5. Cola de tareas / Cache: Redis
+  # 6. La cola de mensajes: Redis (Donde viajan los tickets del "Sidekiq")
   redis:
     image: redis:7-alpine
     ports:
@@ -92,3 +123,4 @@ services:
 
 volumes:
   qdrant_data:
+  uploads:
