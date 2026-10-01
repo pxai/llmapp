@@ -1,5 +1,7 @@
 # LLM App
 
+LLM App is a document-processing and retrieval platform for uploading PDFs and other source files, extracting their text, and making them searchable through a vector database powered by an LLM workflow. The stack combines a FastAPI backend, a Chainlit frontend, Redis task queuing, a Celery worker for document processing, and Qdrant for semantic search and retrieval.
+
 ## Run
 
 ```sh

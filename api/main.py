@@ -1,9 +1,9 @@
 import asyncio
 import os
-from pathlib import Path
-from uuid import uuid4
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
+from uuid import uuid4
 
 import httpx
 from celery import Celery
@@ -15,6 +15,11 @@ from redis.exceptions import RedisError
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+from logging_config import configure_logging
+
+
+logger = configure_logging("llmapp.api")
 
 
 @asynccontextmanager
@@ -74,6 +79,7 @@ async def version() -> dict[str, str]:
 @app.post("/uploads/pdf", status_code=202)
 async def upload_pdf(file: UploadFile = File(...)) -> dict[str, str]:
     if not file.filename or Path(file.filename).suffix.lower() != ".pdf":
+        logger.warning("pdf_upload_rejected", filename=file.filename)
         raise HTTPException(status_code=400, detail="Only PDF files are supported")
 
     upload_dir = Path(os.getenv("UPLOAD_DIR", "/uploads"))
@@ -84,6 +90,7 @@ async def upload_pdf(file: UploadFile = File(...)) -> dict[str, str]:
         with file_path.open("wb") as destination:
             first_chunk = await file.read(1024)
             if b"%PDF-" not in first_chunk:
+                logger.warning("pdf_upload_invalid", filename=file.filename, path=str(file_path))
                 raise HTTPException(status_code=400, detail="Uploaded file is not a PDF")
             destination.write(first_chunk)
             while chunk := await file.read(1024 * 1024):
@@ -101,8 +108,11 @@ async def upload_pdf(file: UploadFile = File(...)) -> dict[str, str]:
             args=[str(file_path)],
         )
     except Exception:
+        logger.exception("pdf_upload_enqueue_failed", path=str(file_path))
         file_path.unlink(missing_ok=True)
         raise
+
+    logger.info("pdf_upload_queued", task_id=task.id, path=str(file_path), filename=file.filename)
     return {"task_id": task.id, "status": "queued"}
 
 
@@ -111,9 +121,12 @@ async def get_task_status(task_id: str) -> dict[str, object]:
     def read_result() -> dict[str, object]:
         result = AsyncResult(task_id, app=celery_app)
         if result.state == "SUCCESS":
+            logger.info("task_completed", task_id=task_id)
             return {"task_id": task_id, "status": "completed", "result": result.result}
         if result.state == "FAILURE":
+            logger.warning("task_failed", task_id=task_id, error=str(result.result))
             return {"task_id": task_id, "status": "failed", "error": str(result.result)}
+        logger.info("task_status_checked", task_id=task_id, state=result.state)
         return {
             "task_id": task_id,
             "status": "processing" if result.state == "STARTED" else "queued",
