@@ -1,0 +1,59 @@
+node_modules
+dist/
+.env
+*test-results/
+**/__pycache__
+./api/__pycache__
+
+# Cache de Python y archivos compilados
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Entornos virtuales (Virtual Environments)
+.venv/
+venv/
+ENV/
+env/
+
+# Variables de entorno y secretos (¡No los subas a GitHub!)
+.env
+.env.local
+*.secret
+
+# Herramientas de empaquetado y distribución
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+
+# Pruebas / Cobertura de código (Testing / Coverage)
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+.cache
+.pytest_cache/
+
+# Configuración de editores de código comunes
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
+
+# Archivos del sistema operativo
+.DS_Store
+Thumbs.db

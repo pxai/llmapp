@@ -27,6 +27,7 @@ services:
       - "8080:8080"
     volumes:
       - ./api:/app
+      - .:/workspace
       - ~/.aws:/root/.aws:ro  # Credenciales locales de AWS Bedrock
       - uploads:/uploads
     command: sh -c "pip install -r requirements.txt && uvicorn main:app --host 0.0.0.0 --port 8080 --reload"
@@ -36,6 +37,7 @@ services:
       - VECTOR_DB_URL=${VECTOR_DB_URL:-http://vector_db:6333}
       - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION:-us-east-1}
       - UPLOAD_DIR=/uploads
+      - PYTHONPATH=/workspace
     depends_on:
       postgres:
         condition: service_healthy
@@ -60,6 +62,7 @@ services:
       dockerfile: Dockerfile
     volumes:
       - ./worker:/app
+      - .:/workspace
       - ~/.aws:/root/.aws:ro  # El worker también necesita credenciales para llamar a AWS Bedrock
       - uploads:/uploads
     # Comando para arrancar Celery apuntando a tu archivo de tareas (ej: tasks.py)
@@ -70,6 +73,7 @@ services:
       - VECTOR_DB_URL=${VECTOR_DB_URL:-http://vector_db:6333}
       - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION:-us-east-1}
       - UPLOAD_DIR=/uploads
+      - PYTHONPATH=/workspace
     depends_on:
       redis:
         condition: service_healthy
