@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 
+import structlog
 from celery import Celery
 
 from logging_config import configure_logging

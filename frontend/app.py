@@ -71,7 +71,7 @@ async def on_chat_start() -> None:
         accept=["application/pdf"],
         max_files=1,
         timeout=600,
-    )
+    ).send()
 
     if not files:
         await cl.Message(content="No file uploaded.", author="system").send()
