@@ -1,6 +1,80 @@
 # LLM App
 
 LLM App is a document-processing and retrieval platform for uploading PDFs and other source files, extracting their text, and making them searchable through a vector database powered by an LLM workflow. The stack combines a FastAPI backend, a Chainlit frontend, Redis task queuing, a Celery worker for document processing, and Qdrant for semantic search and retrieval.
+## System Overview
+
+```text
++------------------+      PDF upload      +----------------------+
+|                  | -------------------> |                      |
+| Chainlit Frontend|                      | FastAPI API          |
+|  (UI / Chat)     | <------------------- |  /uploads/pdf        |
+|                  |     task_id/status   |                      |
++------------------+                      +----------+-----------+
+                                                    |
+                                                    | enqueue task
+                                                    v
+                                         +----------------------+
+                                         | Redis / Celery Queue |
+                                         +----------+-----------+
+                                                    |
+                                                    | worker job
+                                                    v
+                                         +----------------------+
+                                         | PDF Worker           |
+                                         | - extract text       |
+                                         | - chunk text         |
+                                         | - index in Qdrant    |
+                                         +----------+-----------+
+                                                    |
+                                                    v
+                                         +----------------------+
+                                         | Qdrant Vector DB     |
+                                         +----------------------+
+
+Optional supporting services:
+- Postgres: app metadata / persistence
+- AWS Bedrock: LLM / embeddings (future integration)
+```
+
+## Query Flow
+
+```text
++------------------+        user question        +----------------------+
+|                  | --------------------------> |                      |
+| Chainlit Frontend|                            | FastAPI API          |
+|  (chat UI)       | <-------------------------- |  /query or /chat     |
+|                  |   answer + context         |                      |
++------------------+                            +----------+-----------+
+                                                    |
+                                                    | 1. receive prompt
+                                                    v
+                                         +----------------------+
+                                         | Query Router / API   |
+                                         | - validate input     |
+                                         | - build prompt       |
+                                         +----------+-----------+
+                                                    |
+                                                    | 2. semantic search
+                                                    v
+                                         +----------------------+
+                                         | Qdrant Vector DB     |
+                                         | - nearest neighbors  |
+                                         +----------+-----------+
+                                                    |
+                                                    | 3. relevant chunks
+                                                    v
+                                         +----------------------+
+                                         | LLM / Bedrock / RAG  |
+                                         | - combine context    |
+                                         | - answer user        |
+                                         +----------+-----------+
+                                                    |
+                                                    v
+                                         +----------------------+
+                                         | Final response       |
+                                         | sent back to UI      |
+                                         +----------------------+
+```
 
 ## Run
 
